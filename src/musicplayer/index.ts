@@ -2837,7 +2837,11 @@ function _registerMvuEventListeners() {
   };
 
   eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, createReconcileHandler('VARIABLE_UPDATE_ENDED'));
-  eventOn(tavern_events.MESSAGE_DELETED, createReconcileHandler('MESSAGE_DELETED'));
+
+  eventOn(tavern_events.MESSAGE_DELETED, (deletedId: number) => {
+    logProbe(`[EventAdapter] 捕获到删除事件 (原ID: ${deletedId})，正在通过“高级历史通道”触发全量校准...`);
+    void _handleHistoryChangeEvent('MESSAGE_DELETED');
+  });
 
   logProbe('[EventDispatcher] MVU监听器部署完毕。');
 }
@@ -2918,7 +2922,7 @@ async function _handleNewAssistantMessage(messageId: number): Promise<void> {
  * 原则：SSoT (以队列状态为准), 鲁棒性 (补救缺失的 UI)
  */
 async function _ensureUiVisibility() {
-  logProbe('[UiGuard] 正在检查界面一致性...', 'groupCollapsed');
+  logProbe('[UiGuard] 正在检查界面一致性 (高性能局部扫描)...', 'groupCollapsed');
 
   const topQueueItem = StateManager.getTopQueueItem();
   if (!topQueueItem) {
@@ -2928,47 +2932,78 @@ async function _ensureUiVisibility() {
   }
 
   try {
-    const latestMessages = getChatMessages(-1);
-    if (!latestMessages || latestMessages.length === 0) {
-      logProbe('[UiGuard] 无法获取最新消息，检查中止。', 'warn');
-      logProbe('', 'groupEnd');
-      return;
-    }
-    const latestMsgObj = latestMessages[0];
+    // [步骤 1] 获取最后一条消息，作为定位锚点
+    // 参数 -1 表示获取最新的楼层
+    const lastMsgList = getChatMessages(-1);
 
-    if (latestMsgObj.message_id === 0) {
-      logProbe('[UiGuard] 最新消息是开场白 (message_id: 0)，拒绝执行补救注入。');
+    if (!lastMsgList || lastMsgList.length === 0) {
+      logProbe('[UiGuard] 无法获取最新楼层锚点，检查中止。', 'warn');
       logProbe('', 'groupEnd');
       return;
     }
 
-    if (latestMsgObj.role === 'user') {
-      logProbe('[UiGuard] 最新消息是用户发言，拒绝执行补救注入。');
+    // [步骤 2] 计算最近 10 楼的 ID 范围
+    // 假设最后一条 ID 是 100，我们想要 91-100 (共10条)
+    const lastId = lastMsgList[0].message_id;
+    // 使用 Math.max 确保不会算出负数 ID
+    const startId = Math.max(0, lastId - 9);
+    const rangeString = `${startId}-${lastId}`;
+
+    logProbe(`[UiGuard] 正在获取最近的 10 条消息 (ID范围: ${rangeString})...`);
+
+    // [步骤 3] 仅拉取这 10 条数据
+    // 接口支持 "StartID-EndID" 格式的字符串
+    const recentMessages = getChatMessages(rangeString);
+
+    if (!recentMessages || recentMessages.length === 0) {
+      logProbe('[UiGuard] 局部消息拉取为空，检查中止。', 'warn');
       logProbe('', 'groupEnd');
       return;
     }
 
-    if (latestMsgObj.message && latestMsgObj.message.includes('<DarkBramblePlayer/>')) {
-      logProbe('[UiGuard] 最新消息已有播放器标签，无需操作。');
-      logProbe('', 'groupEnd');
-      return;
+    let foundTarget = false;
+
+    // [步骤 4] 倒序扫描这 10 条数据
+    for (let i = recentMessages.length - 1; i >= 0; i--) {
+      const msg = recentMessages[i];
+
+      // 1. 跳过用户消息
+      if (msg.role === 'user') {
+        continue;
+      }
+
+      // 2. 遇到开场白停止 (尊重作者排版)
+      if (msg.message_id === 0) {
+        logProbe('[UiGuard] 回溯至开场白，停止。');
+        break;
+      }
+
+      // 3. 检查是否已有标签
+      if (msg.message && msg.message.includes('<DarkBramblePlayer/>')) {
+        logProbe(`[UiGuard] 在 message_id: ${msg.message_id} 处发现已有标签，状态正常。`);
+        foundTarget = true;
+        break;
+      }
+
+      // 4. 执行注入
+      logProbe(`[UiGuard] 发现目标宿主: message_id: ${msg.message_id} (${msg.role})，执行补救注入...`);
+      const newContent = `${msg.message}\n<DarkBramblePlayer/>`;
+
+      await setChatMessages([
+        {
+          message_id: msg.message_id,
+          message: newContent,
+        },
+      ]);
+
+      logProbe('[UiGuard] 补救注入成功。');
+      foundTarget = true;
+      break;
     }
 
-    const messageId = latestMsgObj.message_id;
-    logProbe(
-      `[UiGuard] 发现音乐正在播放但 UI 缺失，正在为 message_id: ${messageId} (${latestMsgObj.role}) 执行补救注入...`,
-    );
-
-    const newContent = `${latestMsgObj.message}\n<DarkBramblePlayer/>`;
-
-    await setChatMessages([
-      {
-        message_id: messageId,
-        message: newContent,
-      },
-    ]);
-
-    logProbe('[UiGuard] 补救注入成功。');
+    if (!foundTarget) {
+      logProbe('[UiGuard] 在最近 10 条消息中未发现合适的注入点。');
+    }
   } catch (error) {
     logProbe(`[UiGuard] 执行补救注入时发生错误: ${error}`, 'error');
   } finally {

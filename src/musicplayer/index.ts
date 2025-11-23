@@ -1,4 +1,4 @@
-console.log('音乐播放器脚本9.2.1版本');
+console.log('音乐播放器脚本9.2.2版本');
 
 // =================================================================
 // 0. 诊断工具 (Diagnostic Tools)
@@ -1352,7 +1352,7 @@ async function _reconcilePlaylistQueue(eventPayload?: any, options?: { transitio
     logProbe('[Reconciler] (事务) 已上效果锁并广播“过渡中”状态，UI应进入等待。');
     broadcastFullState();
 
-    // --- 核心逻辑 (原有的 try...finally 块) ---
+    // --- 核心逻辑 ---
     try {
       const oldTopItem = StateManager.getTopQueueItem();
 
@@ -1361,49 +1361,33 @@ async function _reconcilePlaylistQueue(eventPayload?: any, options?: { transitio
 
       if (isMvuMode) {
         // [路径 A: MVU 模式]
-        // 优先使用事件载荷(如变量更新事件提供的)，否则主动查询权威状态
         if (eventPayload?.stat_data) {
+          // Case 1: 事件推送 (VARIABLE_UPDATE_ENDED)
           currentStateData = eventPayload.stat_data;
           logProbe('[Reconciler] (事实) 采用事件载荷提供的 MVU 状态。');
         } else {
-          // 如果是主动查询（通常由滑动、删除触发），必须检查最新消息是否有效。
-          // 如果最新消息为空（正在生成中），此时查询到的 MVU 状态也会是空的（假阴性），会导致音乐错误切断。
-          // 此时应中止校准，保持现状，等待 VARIABLE_UPDATE_ENDED 事件。
-          const latestMsgs = getChatMessages(-1);
-          const latestMsg = latestMsgs && latestMsgs.length > 0 ? latestMsgs[0] : null;
-
-          if (!latestMsg || !latestMsg.message || latestMsg.message.trim() === '') {
-            logProbe('[Reconciler] (MVU卫士) 检测到最新消息为空或正在生成。为防止误判变量丢失，校准中止。', 'warn');
-            // 保持当前状态不变
-            return;
-          }
-
+          // Case 2: 主动查询 (MESSAGE_SWIPED / MESSAGE_DELETED)
+          // 注意：由于我们在事件监听层已经通过 duringGenerating() 过滤了生成中的情况，
+          // 这里获取到的权威状态应该是稳定且可靠的。
           const authState = await _findLatestAuthoritativeMvuState();
-          currentStateData = authState?.mvuData?.stat_data ?? {};
-          logProbe('[Reconciler] (事实) 主动查询并采用了最新的 MVU 状态。');
+
+          if (authState) {
+            currentStateData = authState.mvuData?.stat_data ?? {};
+            logProbe('[Reconciler] (事实) 主动查询并采用了最新的 MVU 状态。');
+          } else {
+            // 如果真的找不到任何数据（极罕见），默认为空状态，这意味着触发器可能全部失效
+            logProbe('[Reconciler] (事实) 未找到有效的 MVU 状态，将使用空状态进行校准。', 'warn');
+            currentStateData = {};
+          }
         }
       } else {
         // [路径 B: Text 模式]
         logProbe('[Reconciler] (事实) 进入 Text 模式状态获取流程...');
-
-        // --- 2.1 滑动卫士 (Swipe Guard) ---
-        const latestMsgs = getChatMessages(-1);
-        const latestMsg = latestMsgs && latestMsgs.length > 0 ? latestMsgs[0] : null;
-
-        // 如果最新消息不存在(极少见)或内容为空(正在生成中/无效滑动)，卫士拦截
-        if (!latestMsg || !latestMsg.message || latestMsg.message.trim() === '') {
-          logProbe('[Reconciler] (滑动卫士) 检测到最新消息为空或不存在，判定为“生成中”或无效状态。校准中止。', 'warn');
-          // 保持当前状态不变，不做任何修改
-          return;
-        }
-
-        // --- 2.2 调用吟游诗人引擎 ---
         currentStateData = await TextTagManager.getLatestState();
         logProbe('[Reconciler] (事实) TextTagManager 已返回标准化状态。');
       }
 
       // --- 3. 【生成报告】: 委托 MvuManager 进行边沿检测 ---
-      // 注意：MvuManager 在这里是“盲”的，它不知道数据来自文本还是变量，它只负责比较 JSON 对象的差异。
       const previousStateData = MvuManager.getPreviousState();
       const changeReport = MvuManager.calculateChangeReport(previousStateData, currentStateData, triggers);
 
@@ -1499,7 +1483,6 @@ async function _reconcilePlaylistQueue(eventPayload?: any, options?: { transitio
       }
 
       // --- 6. 【更新记忆】: 为下一次边沿检测做准备 ---
-
       await MvuManager.persistCurrentState(currentStateData);
     } catch (error) {
       logProbe(`[Reconciler] 核心逻辑执行期间发生严重错误: ${error}`, 'error');
@@ -3254,6 +3237,40 @@ async function _executeSoftReset(options?: { autoPlayIfWasPlaying?: boolean }) {
   }
 }
 
+/**
+ * [V9.9 原始数据卫士] (Raw Data Guard)
+ * 职责 (Query): 直接穿透封装层，检查酒馆内存中指定消息的内容是否已就绪。
+ * 这是区分 "浏览历史" (内容已存在) 和 "触发生成" (内容为空) 的唯一事实来源。
+ */
+function _isSwipeContentReady(messageId: number): boolean {
+  // 1. 安全获取上下文
+  // 使用 (window as any) 这种标准的 TS 写法来访问自定义全局变量，
+  // 这样既安全，又不需要使用丑陋的 @ts-ignore 注释。
+  const context = (window as any).SillyTavern?.getContext?.();
+
+  if (!context || !context.chat) {
+    // 极罕见情况：如果上下文不存在，为安全起见视为未就绪
+    return false;
+  }
+
+  // 2. 获取消息对象
+  const msg = context.chat[messageId];
+  if (!msg) return false;
+
+  // 3. 获取指针和数据槽
+  const pointer = msg.swipe_id;
+  const swipes = msg.swipes;
+
+  // 4. 核心判定：必须是字符串且长度大于0
+  if (Array.isArray(swipes) && typeof pointer === 'number') {
+    const content = swipes[pointer];
+    // 只有当内容是实实在在的字符串，且不是空串时，才视为历史记录
+    return typeof content === 'string' && content.length > 0;
+  }
+
+  return false;
+}
+
 function _registerContextualEventListeners() {
   logProbe('[EventDispatcher] 正在注册“上下文专属”事件监听器...');
 
@@ -3271,7 +3288,18 @@ function _registerContextualEventListeners() {
   eventOn(tavern_events.MESSAGE_SWIPED, (id: number) => {
     if (!isScriptActive) return;
 
-    logProbe(`[Event] 捕获到滑动事件 (message_id: ${id})。`);
+    // 原始数据卫士 (Raw Data Guard)
+    // 目的: 区分 "浏览历史Swipe" 和 "触发生成Swipe"
+    // 原理: 直接检查内存。如果内容为空，说明是生成行为，必须拦截。
+    if (!_isSwipeContentReady(id)) {
+      logProbe(
+        `[Event-Swipe] (卫士) 拦截生效！检测到 message_id: ${id} 的内容尚未填充 (生成中/空内容)，忽略本次操作。`,
+        'warn',
+      );
+      return;
+    }
+
+    logProbe(`[Event] 捕获到滑动事件 (message_id: ${id})。卫士已放行 (内容已就绪)。`);
     if (!isCorePlayerInitialized) return;
 
     if (id === 0) {

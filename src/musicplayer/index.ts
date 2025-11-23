@@ -3244,9 +3244,8 @@ async function _executeSoftReset(options?: { autoPlayIfWasPlaying?: boolean }) {
  */
 function _isSwipeContentReady(messageId: number): boolean {
   // 1. 安全获取上下文
-  // 使用 (window as any) 这种标准的 TS 写法来访问自定义全局变量，
-  // 这样既安全，又不需要使用丑陋的 @ts-ignore 注释。
-  const context = (window as any).SillyTavern?.getContext?.();
+  // [修复] 必须通过 window.parent 才能在 iframe 中访问到酒馆的真实数据
+  const context = (window.parent as any).SillyTavern?.getContext?.();
 
   if (!context || !context.chat) {
     // 极罕见情况：如果上下文不存在，为安全起见视为未就绪

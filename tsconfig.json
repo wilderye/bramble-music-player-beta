@@ -13,7 +13,15 @@
     "module": "ESNext",
     "outDir": "dist",
     "baseUrl": "src",
+<<<<<<< HEAD
     "paths": {},
+=======
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    },
+>>>>>>> 94ae77e7e1b4119e281bebd10f4e97735db35c63
     "moduleDetection": "auto",
     "moduleResolution": "bundler",
     "allowUmdGlobalAccess": true,
@@ -23,6 +31,10 @@
     "checkJs": false,
     "sourceMap": true,
     "strict": true,
+<<<<<<< HEAD
+=======
+    "jsx": "react-jsx",
+>>>>>>> 94ae77e7e1b4119e281bebd10f4e97735db35c63
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,

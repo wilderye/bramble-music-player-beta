@@ -26,12 +26,20 @@ export default [
     rules: {
       ...eslintPluginBetterTailwindcss.configs['recommended-warn'].rules,
       ...eslintPluginBetterTailwindcss.configs['recommended-error'].rules,
+<<<<<<< HEAD
       'better-tailwindcss/enforce-consistent-line-wrapping': ['off', { printWidth: 120 }],
+=======
+      'better-tailwindcss/enforce-consistent-line-wrapping': ['off', { preferSingleLine: true, printWidth: 120 }],
+>>>>>>> ad6d1e8e5505fa75c59cbd79365fd12fe00a82eb
       'better-tailwindcss/no-unregistered-classes': ['off', { ignore: ['fa-*'] }],
     },
     settings: {
       'better-tailwindcss': {
+<<<<<<< HEAD
         entryPoint: 'src/global.css',
+=======
+        entryPoint: 'tailwind.css',
+>>>>>>> ad6d1e8e5505fa75c59cbd79365fd12fe00a82eb
         tailwindConfig: 'tailwind.config.js',
       },
     },
@@ -56,6 +64,10 @@ export default [
       'import-x/no-cycle': 'error',
       'import-x/no-dynamic-require': 'warn',
       'import-x/no-nodejs-modules': 'warn',
+<<<<<<< HEAD
+=======
+      'import-x/no-unresolved': [2, { ignore: ['^http'] }],
+>>>>>>> ad6d1e8e5505fa75c59cbd79365fd12fe00a82eb
       'no-dupe-class-members': 'off',
       'no-empty-function': 'off',
       'no-floating-decimal': 'error',
@@ -66,6 +78,10 @@ export default [
       'no-undef': 'off',
       'no-unused-vars': 'off',
       'no-var': 'error',
+<<<<<<< HEAD
+=======
+      'pinia/no-duplicate-store-ids': 'off',
+>>>>>>> ad6d1e8e5505fa75c59cbd79365fd12fe00a82eb
       'pinia/require-setup-store-properties-export': 'off',
       'prefer-const': 'warn',
       'vue/multi-word-component-names': 'off',

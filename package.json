@@ -71,7 +71,7 @@
     "webpack-obfuscator": "^3.6.0"
   },
   "dependencies": {
-    "@vueuse/components": "^14.1.0",
+    "@vueuse/components": "^14.2.0",
     "@vueuse/core": "^13.9.0",
     "@vueuse/integrations": "^13.9.0",
     "@vueuse/shared": "^13.9.0",

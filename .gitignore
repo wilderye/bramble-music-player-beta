@@ -11,5 +11,8 @@ pnpm-debug.log*
 
 auto-imports.d.ts
 components.d.ts
+<<<<<<< HEAD
 
 docs/
+=======
+>>>>>>> 657d325b384170d58b72e3fe3cc38173e31a414a
